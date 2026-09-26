@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, Suspense, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, Suspense, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
 import { Canvas, ThreeEvent, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Text, RoundedBox, ContactShadows } from '@react-three/drei';
 import * as THREE from 'three';
@@ -225,8 +225,322 @@ const Draggable = ({ children, position, onDrag, onSelect, enabled = true, dragg
 };
 
 // ============================================================
-//  3D MODELS — Matching real reference photos
+//  HOLE HIGHLIGHTS, ANIMATED ARROWS & GHOST PREVIEW MODELS
 // ============================================================
+
+// Pulsing beacon ring directly around breadboard socket holes
+const PulsingHoleRing = ({ pos, color = "#00e5ff", label }: { pos: [number, number, number], color?: string, label?: string }) => {
+    const ringRef = useRef<THREE.Mesh>(null);
+    useFrame(({ clock }) => {
+        if (ringRef.current) {
+            const s = 1 + Math.sin(clock.getElapsedTime() * 5) * 0.18;
+            ringRef.current.scale.set(s, s, 1);
+        }
+    });
+
+    return (
+        <group position={[pos[0], 0.22, pos[2]]}>
+            {/* Outer animated pulsing ring */}
+            <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[0.08, 0.14, 32]} />
+                <meshBasicMaterial color={color} transparent opacity={0.9} side={THREE.DoubleSide} />
+            </mesh>
+            {/* Inner bright core */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]}>
+                <circleGeometry args={[0.07, 32]} />
+                <meshBasicMaterial color={color} transparent opacity={0.65} side={THREE.DoubleSide} />
+            </mesh>
+            {/* Vertical beacon column */}
+            <mesh position={[0, 0.3, 0]}>
+                <cylinderGeometry args={[0.012, 0.012, 0.6, 8]} />
+                <meshBasicMaterial color={color} transparent opacity={0.35} />
+            </mesh>
+            {label && (
+                <Text position={[0, 0.65, 0]} fontSize={0.12} color={color} anchorX="center" anchorY="bottom" outlineWidth={0.02} outlineColor="#000000">
+                    {label}
+                </Text>
+            )}
+        </group>
+    );
+};
+
+// 3D Bouncing Guide Arrow pointing directly at target breadboard hole
+const BouncingArrow = ({ position, label, color = "#ffea00" }: { position: [number, number, number], label?: string, color?: string }) => {
+    const arrowRef = useRef<THREE.Group>(null);
+    useFrame(({ clock }) => {
+        if (arrowRef.current) {
+            arrowRef.current.position.y = position[1] + Math.sin(clock.getElapsedTime() * 4) * 0.15;
+        }
+    });
+
+    return (
+        <group ref={arrowRef} position={position}>
+            {/* Arrow Stem */}
+            <mesh position={[0, 0.7, 0]}>
+                <cylinderGeometry args={[0.06, 0.06, 0.6, 16]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.5} roughness={0.2} />
+            </mesh>
+            {/* Arrow Head pointing DOWN */}
+            <mesh position={[0, 0.3, 0]} rotation={[Math.PI, 0, 0]}>
+                <coneGeometry args={[0.2, 0.4, 16]} />
+                <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2} roughness={0.2} />
+            </mesh>
+            {label && (
+                <Text position={[0, 1.25, 0]} fontSize={0.16} color="#ffffff" anchorX="center" outlineWidth={0.03} outlineColor="#000000">
+                    {label}
+                </Text>
+            )}
+        </group>
+    );
+};
+
+// High-fidelity Ghost Component Model (Realistic translucent models for LED, Battery, Resistor, Switch, etc.)
+const GhostModel = ({ type, pos, tint = "#00e5ff", opacity = 0.75 }: { type: string, pos: [number, number, number], tint?: string, opacity?: number }) => {
+    if (type === 'LED') {
+        return (
+            <group position={[pos[0], pos[1] + 0.35, pos[2]]}>
+                {/* LED Bulb Dome */}
+                <mesh position={[0, 0.25, 0]}>
+                    <sphereGeometry args={[0.18, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2]} />
+                    <meshStandardMaterial color={tint} emissive={tint} emissiveIntensity={1.2} transparent opacity={opacity} roughness={0.1} />
+                </mesh>
+                {/* Cylindrical bulb body */}
+                <mesh position={[0, 0.1, 0]}>
+                    <cylinderGeometry args={[0.18, 0.18, 0.3, 32]} />
+                    <meshStandardMaterial color={tint} emissive={tint} emissiveIntensity={0.8} transparent opacity={opacity} roughness={0.1} />
+                </mesh>
+                {/* Flanged base rim */}
+                <mesh position={[0, -0.07, 0]}>
+                    <cylinderGeometry args={[0.21, 0.21, 0.05, 32]} />
+                    <meshStandardMaterial color={tint} transparent opacity={opacity} />
+                </mesh>
+                {/* Long Anode Pin (+ right side) */}
+                <mesh position={[PITCH / 2, -0.32, 0]}>
+                    <cylinderGeometry args={[0.018, 0.018, 0.5, 12]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} transparent opacity={0.9} />
+                </mesh>
+                {/* Short Cathode Pin (- left side) */}
+                <mesh position={[-PITCH / 2, -0.295, 0]}>
+                    <cylinderGeometry args={[0.018, 0.018, 0.45, 12]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} transparent opacity={0.9} />
+                </mesh>
+                {/* Polar labels */}
+                <Text position={[PITCH / 2, 0.45, 0]} fontSize={0.1} color="#00ff88" anchorX="center" outlineWidth={0.02} outlineColor="#000000">+ Anode (Long)</Text>
+                <Text position={[-PITCH / 2, 0.45, 0]} fontSize={0.1} color="#ff4444" anchorX="center" outlineWidth={0.02} outlineColor="#000000">- Cathode</Text>
+            </group>
+        );
+    }
+    if (type === 'Battery') {
+        return (
+            <group position={[pos[0], pos[1] + 1.1, pos[2]]}>
+                <mesh>
+                    <boxGeometry args={[1.2, 2.2, 0.7]} />
+                    <meshStandardMaterial color="#2255aa" transparent opacity={opacity} roughness={0.4} />
+                </mesh>
+                <mesh position={[0, 1.15, 0]}>
+                    <boxGeometry args={[1.2, 0.2, 0.7]} />
+                    <meshStandardMaterial color="#e8e8e8" transparent opacity={opacity} />
+                </mesh>
+                {/* Positive snap terminal */}
+                <mesh position={[0.3, 1.35, 0]}>
+                    <cylinderGeometry args={[0.12, 0.12, 0.2, 16]} />
+                    <meshStandardMaterial color="#ff3333" emissive="#ff3333" emissiveIntensity={0.8} />
+                </mesh>
+                <Text position={[0.3, 1.6, 0]} fontSize={0.12} color="#ff3333" anchorX="center">+ 9V (Red)</Text>
+                {/* Negative snap terminal */}
+                <mesh position={[-0.3, 1.35, 0]}>
+                    <cylinderGeometry args={[0.15, 0.15, 0.2, 6]} />
+                    <meshStandardMaterial color="#222222" />
+                </mesh>
+                <Text position={[-0.3, 1.6, 0]} fontSize={0.12} color="#ffffff" anchorX="center">- GND (Black)</Text>
+            </group>
+        );
+    }
+    if (type === 'Resistor') {
+        return (
+            <group position={[pos[0], pos[1] + 0.35, pos[2]]}>
+                {/* Body */}
+                <mesh rotation={[0, 0, Math.PI / 2]}>
+                    <cylinderGeometry args={[0.12, 0.12, 0.6, 20]} />
+                    <meshStandardMaterial color="#d4b483" transparent opacity={opacity} />
+                </mesh>
+                {/* Color bands */}
+                {[-0.18, -0.06, 0.06, 0.18].map((x, i) => (
+                    <mesh key={i} position={[x, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                        <cylinderGeometry args={[0.125, 0.125, 0.04, 20]} />
+                        <meshStandardMaterial color={['#8B4513', '#000000', '#FF0000', '#FFD700'][i]} />
+                    </mesh>
+                ))}
+                {/* Left bent lead */}
+                <mesh position={[-0.5, -0.2, 0]}>
+                    <cylinderGeometry args={[0.018, 0.018, 0.45]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} />
+                </mesh>
+                {/* Right bent lead */}
+                <mesh position={[0.5, -0.2, 0]}>
+                    <cylinderGeometry args={[0.018, 0.018, 0.45]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} />
+                </mesh>
+            </group>
+        );
+    }
+    if (type === 'Switch') {
+        return (
+            <group position={[pos[0], pos[1] + 0.25, pos[2]]}>
+                <mesh position={[0, 0.12, 0]}>
+                    <boxGeometry args={[0.7, 0.25, 0.4]} />
+                    <meshStandardMaterial color="#333333" transparent opacity={opacity} />
+                </mesh>
+                <mesh position={[0, 0.35, 0]}>
+                    <cylinderGeometry args={[0.08, 0.08, 0.35, 16]} />
+                    <meshStandardMaterial color="#eeeeee" metalness={0.8} />
+                </mesh>
+                {/* Two legs */}
+                <mesh position={[-0.25, -0.15, 0]}>
+                    <cylinderGeometry args={[0.02, 0.02, 0.45]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} />
+                </mesh>
+                <mesh position={[0.25, -0.15, 0]}>
+                    <cylinderGeometry args={[0.02, 0.02, 0.45]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} />
+                </mesh>
+            </group>
+        );
+    }
+    if (type === 'Motor') {
+        return (
+            <group position={[pos[0], pos[1] + 0.4, pos[2]]}>
+                <mesh rotation={[0, 0, Math.PI / 2]}>
+                    <cylinderGeometry args={[0.3, 0.3, 0.7, 24]} />
+                    <meshStandardMaterial color="#a0a5aa" metalness={0.8} roughness={0.3} transparent opacity={opacity} />
+                </mesh>
+                <mesh position={[0.45, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                    <cylinderGeometry args={[0.05, 0.05, 0.3, 16]} />
+                    <meshStandardMaterial color="#dddddd" metalness={0.9} />
+                </mesh>
+                <mesh position={[-0.375, -0.25, 0]}>
+                    <cylinderGeometry args={[0.02, 0.02, 0.4]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} />
+                </mesh>
+                <mesh position={[0.375, -0.25, 0]}>
+                    <cylinderGeometry args={[0.02, 0.02, 0.4]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} />
+                </mesh>
+            </group>
+        );
+    }
+    if (type === 'Buzzer') {
+        return (
+            <group position={[pos[0], pos[1] + 0.3, pos[2]]}>
+                <mesh position={[0, 0.2, 0]}>
+                    <cylinderGeometry args={[0.35, 0.35, 0.4, 24]} />
+                    <meshStandardMaterial color="#1a1a1a" roughness={0.3} transparent opacity={opacity} />
+                </mesh>
+                <mesh position={[0, 0.405, 0]}>
+                    <cylinderGeometry args={[0.08, 0.08, 0.02, 16]} />
+                    <meshStandardMaterial color="#000000" />
+                </mesh>
+                <mesh position={[-0.25, -0.15, 0]}>
+                    <cylinderGeometry args={[0.02, 0.02, 0.45]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} />
+                </mesh>
+                <mesh position={[0.25, -0.15, 0]}>
+                    <cylinderGeometry args={[0.02, 0.02, 0.45]} />
+                    <meshStandardMaterial color="#cccccc" metalness={0.9} />
+                </mesh>
+            </group>
+        );
+    }
+    if (type === 'Potentiometer') {
+        return (
+            <group position={[pos[0], pos[1] + 0.3, pos[2]]}>
+                <mesh position={[0, 0.15, 0]}>
+                    <boxGeometry args={[0.6, 0.3, 0.6]} />
+                    <meshStandardMaterial color="#1565c0" transparent opacity={opacity} />
+                </mesh>
+                <mesh position={[0, 0.35, 0]}>
+                    <cylinderGeometry args={[0.15, 0.15, 0.25, 16]} />
+                    <meshStandardMaterial color="#eeeeee" metalness={0.5} />
+                </mesh>
+                {[-PITCH, 0, PITCH].map((x, i) => (
+                    <mesh key={i} position={[x, -0.15, 0]}>
+                        <cylinderGeometry args={[0.02, 0.02, 0.45]} />
+                        <meshStandardMaterial color="#cccccc" metalness={0.9} />
+                    </mesh>
+                ))}
+            </group>
+        );
+    }
+    return null;
+};
+
+// Helper: Calculate exact hole positions and labels for each step in guided mode
+const getTargetPinsForStep = (step: GuideStep): { pos: [number, number, number]; label?: string; color?: string }[] => {
+    if (!step) return [];
+    const { requiredComponent, targetPos, wireEndPos } = step;
+
+    if (requiredComponent === 'Wire') {
+        const pins: { pos: [number, number, number]; label?: string; color?: string }[] = [
+            { pos: targetPos, label: '1. Start Pin 📍', color: '#ffea00' }
+        ];
+        if (wireEndPos) {
+            pins.push({ pos: wireEndPos, label: '2. End Pin 🎯', color: '#00e5ff' });
+        }
+        return pins;
+    }
+
+    if (requiredComponent === 'LED') {
+        return [
+            { pos: [targetPos[0] + PITCH / 2, 0.22, targetPos[2]], label: '+ Anode (Long)', color: '#00ff88' },
+            { pos: [targetPos[0] - PITCH / 2, 0.22, targetPos[2]], label: '- Cathode (Short)', color: '#ff4444' }
+        ];
+    }
+
+    if (requiredComponent === 'Battery') {
+        return [
+            { pos: [targetPos[0] + 0.75, 0.22, targetPos[2] - 0.5], label: '+ VCC (+9V Red)', color: '#ff3333' },
+            { pos: [targetPos[0] - 0.75, 0.22, targetPos[2]], label: '- GND (Black)', color: '#3388ff' }
+        ];
+    }
+
+    if (requiredComponent === 'Resistor') {
+        return [
+            { pos: [targetPos[0] - 0.5, 0.22, targetPos[2]], label: 'Lead 1', color: '#ffea00' },
+            { pos: [targetPos[0] + 0.5, 0.22, targetPos[2]], label: 'Lead 2', color: '#ffea00' }
+        ];
+    }
+
+    if (requiredComponent === 'Switch') {
+        return [
+            { pos: [targetPos[0] - 0.25, 0.22, targetPos[2]], label: 'Pin 1', color: '#ffea00' },
+            { pos: [targetPos[0] + 0.25, 0.22, targetPos[2]], label: 'Pin 2', color: '#ffea00' }
+        ];
+    }
+
+    if (requiredComponent === 'Motor') {
+        return [
+            { pos: [targetPos[0] - 0.375, 0.22, targetPos[2]], label: 'Pin 1 (+)', color: '#00e5ff' },
+            { pos: [targetPos[0] + 0.375, 0.22, targetPos[2]], label: 'Pin 2 (-)', color: '#00e5ff' }
+        ];
+    }
+
+    if (requiredComponent === 'Buzzer') {
+        return [
+            { pos: [targetPos[0] - 0.25, 0.22, targetPos[2]], label: 'Pin (-)', color: '#ff4444' },
+            { pos: [targetPos[0] + 0.25, 0.22, targetPos[2]], label: 'Pin (+)', color: '#00ff88' }
+        ];
+    }
+
+    if (requiredComponent === 'Potentiometer') {
+        return [
+            { pos: [targetPos[0] - PITCH, 0.22, targetPos[2]], label: 'Pin 1', color: '#00e5ff' },
+            { pos: [targetPos[0], 0.22, targetPos[2]], label: 'Wiper', color: '#ffea00' },
+            { pos: [targetPos[0] + PITCH, 0.22, targetPos[2]], label: 'Pin 3', color: '#00e5ff' }
+        ];
+    }
+
+    return [{ pos: targetPos, label: requiredComponent, color: '#ffea00' }];
+};
 
 // --- 9V Battery (Hi-Watt style: rectangular, blue/white/red label, snap terminals) ---
 // Battery wires connect from the snap terminals down to the pin positions (breadboard holes)
@@ -1009,8 +1323,13 @@ const RealisticPotentiometer = ({ pos, onDrag, onSelect, isInteracting, selected
 //  BREADBOARD — Fixed at origin, not draggable
 // ============================================================
 const Breadboard = ({ isInteracting, onSceneClick }: { isInteracting: boolean, onSceneClick: (e: ThreeEvent<PointerEvent>) => void }) => {
-    const holeGeom = useMemo(() => new THREE.BoxGeometry(0.1, 0.02, 0.1), []);
-    const holeMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#1a1a1a' }), []);
+    const holesRef = useRef<THREE.InstancedMesh>(null);
+    const bezelRef = useRef<THREE.InstancedMesh>(null);
+
+    const holeGeom = useMemo(() => new THREE.BoxGeometry(0.12, 0.03, 0.12), []);
+    const holeMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#0c1017', roughness: 0.9, metalness: 0.2 }), []);
+    const bezelGeom = useMemo(() => new THREE.BoxGeometry(0.15, 0.006, 0.15), []);
+    const bezelMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#cbd2db', roughness: 0.5 }), []);
 
     const holes = useMemo(() => {
         const list: [number, number][] = [];
@@ -1026,58 +1345,84 @@ const Breadboard = ({ isInteracting, onSceneClick }: { isInteracting: boolean, o
         return list;
     }, []);
 
+    useLayoutEffect(() => {
+        if (!holesRef.current) return;
+        const dummy = new THREE.Object3D();
+        holes.forEach(([x, z], i) => {
+            dummy.position.set(x, 0.208, z);
+            dummy.updateMatrix();
+            holesRef.current!.setMatrixAt(i, dummy.matrix);
+            if (bezelRef.current) {
+                dummy.position.set(x, 0.202, z);
+                dummy.updateMatrix();
+                bezelRef.current.setMatrixAt(i, dummy.matrix);
+            }
+        });
+        holesRef.current.instanceMatrix.needsUpdate = true;
+        if (bezelRef.current) bezelRef.current.instanceMatrix.needsUpdate = true;
+    }, [holes]);
+
     return (
         <group position={BB_POS} onPointerDown={(e) => isInteracting && (e.stopPropagation(), onSceneClick(e))}>
-            {/* Main board */}
+            {/* Main board body with subtle rounded edges */}
             <RoundedBox args={[16.5, 0.4, 6.2]} radius={0.08}>
-                <meshStandardMaterial color="#f5f5f0" roughness={0.35} />
+                <meshStandardMaterial color="#f7f7f4" roughness={0.35} />
             </RoundedBox>
 
             {/* Center channel groove */}
-            <mesh position={[0, 0.21, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                <planeGeometry args={[15.75, 0.3]} />
-                <meshStandardMaterial color="#e8e5d8" />
+            <mesh position={[0, 0.205, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <planeGeometry args={[15.75, 0.32]} />
+                <meshStandardMaterial color="#e0ded4" />
             </mesh>
 
-            {/* Power rail markings */}
+            {/* Power rail markings - bold and clear */}
             <group position={[0, 0.205, 0]}>
                 {/* Top rails */}
-                <mesh position={[0, 0, -2.375]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[15.75, 0.03]} /><meshStandardMaterial color="#cc0000" /></mesh>
-                <mesh position={[0, 0, -2.875]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[15.75, 0.03]} /><meshStandardMaterial color="#0044cc" /></mesh>
+                <mesh position={[0, 0, -2.375]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[15.75, 0.04]} /><meshStandardMaterial color="#ef4444" /></mesh>
+                <mesh position={[0, 0, -2.875]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[15.75, 0.04]} /><meshStandardMaterial color="#2563eb" /></mesh>
                 {/* Bottom rails */}
-                <mesh position={[0, 0, 2.375]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[15.75, 0.03]} /><meshStandardMaterial color="#cc0000" /></mesh>
-                <mesh position={[0, 0, 2.875]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[15.75, 0.03]} /><meshStandardMaterial color="#0044cc" /></mesh>
+                <mesh position={[0, 0, 2.375]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[15.75, 0.04]} /><meshStandardMaterial color="#ef4444" /></mesh>
+                <mesh position={[0, 0, 2.875]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[15.75, 0.04]} /><meshStandardMaterial color="#2563eb" /></mesh>
 
                 {/* + and - symbols */}
-                {[-7.5, 0, 7.5].map(x => (
+                {[-7.5, -4, 0, 4, 7.5].map(x => (
                     <React.Fragment key={x}>
-                        <Text position={[x, 0.01, -2.375]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.12} color="#cc0000">+</Text>
-                        <Text position={[x, 0.01, -2.875]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.12} color="#0044cc">−</Text>
-                        <Text position={[x, 0.01, 2.375]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.12} color="#cc0000">+</Text>
-                        <Text position={[x, 0.01, 2.875]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.12} color="#0044cc">−</Text>
+                        <Text position={[x, 0.01, -2.375]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.13} color="#ef4444" fontWeight="bold">+</Text>
+                        <Text position={[x, 0.01, -2.875]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.15} color="#2563eb" fontWeight="bold">−</Text>
+                        <Text position={[x, 0.01, 2.375]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.13} color="#ef4444" fontWeight="bold">+</Text>
+                        <Text position={[x, 0.01, 2.875]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.15} color="#2563eb" fontWeight="bold">−</Text>
                     </React.Fragment>
                 ))}
             </group>
 
-            {/* Column numbers (every 5) */}
+            {/* Column numbers along top and bottom for easy hole counting */}
             {[1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 63].map(num => (
-                <Text key={num} position={[(num - 32) * PITCH, 0.21, -1.55]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.1} color="#999">{num}</Text>
+                <React.Fragment key={num}>
+                    <Text position={[(num - 32) * PITCH, 0.21, -1.55]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.1} color="#475569" fontWeight="bold">{num}</Text>
+                    <Text position={[(num - 32) * PITCH, 0.21, 1.55]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.1} color="#475569" fontWeight="bold">{num}</Text>
+                </React.Fragment>
             ))}
-            {/* Row letters */}
+
+            {/* Row letters on both Left and Right edges */}
             {['a', 'b', 'c', 'd', 'e'].map((letter, i) => (
-                <Text key={letter} position={[-8.1, 0.21, -1.125 + i * PITCH]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.1} color="#999">{letter}</Text>
+                <React.Fragment key={letter}>
+                    <Text position={[-8.05, 0.21, -1.125 + i * PITCH]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.11} color="#475569" fontWeight="bold">{letter}</Text>
+                    <Text position={[8.05, 0.21, -1.125 + i * PITCH]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.11} color="#475569" fontWeight="bold">{letter}</Text>
+                </React.Fragment>
             ))}
             {['f', 'g', 'h', 'i', 'j'].map((letter, i) => (
-                <Text key={letter} position={[-8.1, 0.21, 0.125 + i * PITCH]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.1} color="#999">{letter}</Text>
+                <React.Fragment key={letter}>
+                    <Text position={[-8.05, 0.21, 0.125 + i * PITCH]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.11} color="#475569" fontWeight="bold">{letter}</Text>
+                    <Text position={[8.05, 0.21, 0.125 + i * PITCH]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.11} color="#475569" fontWeight="bold">{letter}</Text>
+                </React.Fragment>
             ))}
 
-            {/* Holes */}
-            {holes.map((h, i) => (
-                <mesh key={i} position={[h[0], 0.205, h[1]]} geometry={holeGeom} material={holeMat} />
-            ))}
+            {/* High-performance instanced recessed bezels and socket holes */}
+            <instancedMesh ref={bezelRef} args={[bezelGeom, bezelMat, holes.length]} />
+            <instancedMesh ref={holesRef} args={[holeGeom, holeMat, holes.length]} />
 
             {/* Brand text */}
-            <Text position={[4, 0.22, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.18} color="#ccc" fillOpacity={0.4}>AR Electronics Lab</Text>
+            <Text position={[4, 0.21, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.18} color="#94a3b8" fillOpacity={0.6} fontWeight="bold">AR Electronics Lab</Text>
         </group>
     );
 };
@@ -1590,7 +1935,7 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
 
             {/* ===== 3D VIEWPORT ===== */}
             <div style={{ flex: 1, position: 'relative' }}>
-                <Canvas shadows camera={{ position: [0, 16, 0.1], fov: 35 }}>
+                <Canvas shadows camera={{ position: [0, 14, 7], fov: 38 }}>
                     <Suspense fallback={null}>
                         <OrbitControls ref={orbitRef} makeDefault enabled={!ghostType && !wiringMode && !wireStart} dampingFactor={0.1} minPolarAngle={0} maxPolarAngle={Math.PI / 2.1} />
                         <CameraController orbitRef={orbitRef} joystickRef={joystickDelta} />
@@ -1631,38 +1976,20 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
                         {/* Wires */}
                         {wires.map(w => <JumperWire key={w.id} start={w.start} end={w.end} color={w.color} />)}
 
-                        {/* Ghost preview with hole highlights (User's cursor position) */}
+                        {/* Ghost preview with realistic component & hole highlights (User's cursor position) */}
                         {ghostType && (
                             <group>
-                                {/* Semi-transparent component silhouette */}
-                                <group position={[ghostPos[0], ghostPos[1] + 0.3, ghostPos[2]]}>
-                                    <mesh>
-                                        <boxGeometry args={[0.3, 0.3, 0.3]} />
-                                        <meshStandardMaterial color="#00bbee" transparent opacity={0.15} wireframe />
-                                    </mesh>
-                                </group>
-                                {/* Green circles at exact breadboard hole positions where leads will land */}
+                                {/* Realistic 3D Ghost Model */}
+                                <GhostModel type={ghostType} pos={ghostPos} tint="#00e5ff" opacity={0.75} />
+                                {/* Pulsing green landing rings at exact breadboard holes where pins land */}
                                 {getGhostPinOffsets(ghostType).map(([dx, dz], i) => (
-                                    <group key={i} position={[ghostPos[0] + dx, 0.22, ghostPos[2] + dz]}>
-                                        {/* Glowing ring on the breadboard surface */}
-                                        <mesh rotation={[-Math.PI / 2, 0, 0]}>
-                                            <ringGeometry args={[0.06, 0.1, 32]} />
-                                            <meshStandardMaterial color="#22cc66" emissive="#22cc66" emissiveIntensity={3} transparent opacity={0.85} side={THREE.DoubleSide} />
-                                        </mesh>
-                                        {/* Inner filled dot */}
-                                        <mesh rotation={[-Math.PI / 2, 0, 0]}>
-                                            <circleGeometry args={[0.05, 32]} />
-                                            <meshStandardMaterial color="#22cc66" emissive="#22cc66" emissiveIntensity={2} transparent opacity={0.5} side={THREE.DoubleSide} />
-                                        </mesh>
-                                    </group>
+                                    <PulsingHoleRing
+                                        key={i}
+                                        pos={[ghostPos[0] + dx, 0.22, ghostPos[2] + dz]}
+                                        color="#00ff88"
+                                        label={ghostType === 'LED' ? (dx > 0 ? '+ Anode' : '- Cathode') : undefined}
+                                    />
                                 ))}
-                                {/* Guide line for LED snapping visual */}
-                                {ghostType === 'LED' && (
-                                    <mesh position={[ghostPos[0], 0.25, ghostPos[2]]} rotation={[-Math.PI / 2, 0, 0]}>
-                                        <planeGeometry args={[0.25, 0.02]} />
-                                        <meshBasicMaterial color="#00bbee" opacity={0.5} transparent />
-                                    </mesh>
-                                )}
                             </group>
                         )}
 
@@ -1674,59 +2001,43 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
                                 {(() => {
                                     const step = GUIDE_STEPS[guideStepIndex];
                                     const { targetPos, requiredComponent, wireEndPos } = step;
+                                    const targetPins = getTargetPinsForStep(step);
 
-                                    // If it's a wire, draw a line/curve hinting the connection
+                                    // If it's a wire, draw animated pulsing rings & jumper hint
                                     if (requiredComponent === 'Wire' && wireEndPos) {
                                         return (
                                             <group>
-                                                {/* Pulsing Start Dot */}
-                                                <mesh position={[targetPos[0], 0.3, targetPos[2]]}>
-                                                    <sphereGeometry args={[0.15, 16, 16]} />
-                                                    <meshStandardMaterial color="#ffff00" emissive="#ffff00" emissiveIntensity={2} />
-                                                </mesh>
-                                                {/* Pulsing End Dot */}
-                                                <mesh position={[wireEndPos[0], 0.3, wireEndPos[2]]}>
-                                                    <sphereGeometry args={[0.15, 16, 16]} />
-                                                    <meshStandardMaterial color="#ffff00" emissive="#ffff00" emissiveIntensity={2} />
-                                                </mesh>
-                                                {/* Hint Line */}
-                                                <JumperWire start={targetPos} end={wireEndPos!} color="#ffff00" />
-                                            </group>
-                                        )
-                                    }
-
-                                    // Render Ghost of the *Required* component at target location
-                                    const GhostComp = () => {
-                                        const props = { pos: targetPos, onDrag: () => { }, onSelect: () => { }, isInteracting: true, selected: false };
-
-                                        // We wrap it in a group to apply ghost material effect (e.g. pulsing, transparent)
-                                        // Since we can't easily override materials inside complex sub-components without context,
-                                        // we'll just render a high-visibility marker or the component itself with some overlay.
-
-                                        // Simple Marker for now:
-                                        return (
-                                            <group position={targetPos}>
-                                                {/* Pulsing Highlight Box */}
-                                                <mesh position={[0, 0.5, 0]}>
-                                                    <boxGeometry args={[1, 1, 1]} />
-                                                    <meshBasicMaterial color="#ffff00" transparent opacity={0.2} wireframe />
-                                                </mesh>
-                                                {/* 3D Arrow pointing down */}
-                                                <group position={step.arrowOffset || [0, 2, 0]}>
-                                                    <mesh position={[0, 0.5, 0]}>
-                                                        <boxGeometry args={[0.1, 1, 0.1]} />
-                                                        <meshStandardMaterial color="#ffff00" emissive="#ffff00" emissiveIntensity={2} />
-                                                    </mesh>
-                                                    <mesh position={[0, -0.2, 0]} rotation={[Math.PI, 0, 0]}>
-                                                        <coneGeometry args={[0.3, 0.6, 16]} />
-                                                        <meshStandardMaterial color="#ffff00" emissive="#ffff00" emissiveIntensity={2} />
-                                                    </mesh>
-                                                </group>
+                                                {/* Start hole beacon */}
+                                                <PulsingHoleRing pos={targetPos} color="#ffea00" label="1. Start Hole 📍" />
+                                                {/* End hole beacon */}
+                                                <PulsingHoleRing pos={wireEndPos} color="#00e5ff" label="2. End Hole 🎯" />
+                                                {/* Glowing hint jumper wire */}
+                                                <JumperWire start={targetPos} end={wireEndPos} color="#ffff00" />
+                                                {/* Bouncing pointer arrow */}
+                                                <BouncingArrow position={[targetPos[0], 1.4, targetPos[2]]} label="Click Start Hole" color="#ffea00" />
                                             </group>
                                         );
-                                    };
+                                    }
 
-                                    return <GhostComp />;
+                                    // For physical components, render realistic GhostModel + landing rings + bouncing arrow
+                                    return (
+                                        <group>
+                                            {/* Realistic Ghost model at target position */}
+                                            {requiredComponent !== 'Breadboard' && (
+                                                <GhostModel type={requiredComponent} pos={targetPos} tint="#ffea00" opacity={0.65} />
+                                            )}
+                                            {/* Highlight exact target holes on breadboard */}
+                                            {targetPins.map((pin, idx) => (
+                                                <PulsingHoleRing key={idx} pos={pin.pos} color={pin.color || '#ffea00'} label={pin.label} />
+                                            ))}
+                                            {/* 3D Arrow pointing down at placement spot */}
+                                            <BouncingArrow
+                                                position={[targetPos[0], (step.arrowOffset ? step.arrowOffset[1] : 1.8), targetPos[2]]}
+                                                label={`Place ${requiredComponent} Here`}
+                                                color="#ffea00"
+                                            />
+                                        </group>
+                                    );
                                 })()}
                             </group>
                         )}
@@ -1834,8 +2145,53 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
                     {/* Label */}
                     <div style={{ position: 'absolute', bottom: -22, left: '50%', transform: 'translateX(-50%)', fontSize: '0.55rem', color: '#999', fontWeight: 800, letterSpacing: 1, whiteSpace: 'nowrap' }}>{t('camera.view')}</div>
                 </div>
-                {/* Zoom Controls */}
-                <div style={{ position: 'absolute', bottom: 156, right: 24, zIndex: 300, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {/* Viewport Presets & Zoom Controls */}
+                <div style={{ position: 'absolute', bottom: 156, right: 24, zIndex: 300, display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-end' }}>
+                    {/* Top View Button (Direct Bird's-Eye View for perfect hole alignment) */}
+                    <button
+                        onClick={() => {
+                            if (orbitRef.current) {
+                                const cam = orbitRef.current.object;
+                                cam.position.set(0, 15, 0.05);
+                                orbitRef.current.target.set(0, 0, 0);
+                                orbitRef.current.update();
+                            }
+                        }}
+                        title="Top View (Hole Alignment)"
+                        style={{
+                            padding: '8px 14px', borderRadius: '20px', background: 'rgba(255, 255, 255, 0.95)',
+                            border: '1px solid rgba(0, 0, 0, 0.08)', boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                            fontSize: '0.8rem', fontWeight: 800, color: '#1e293b', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap',
+                            backdropFilter: 'blur(8px)', transition: 'all 0.2s ease'
+                        }}
+                    >
+                        <span>📐</span> Top View
+                    </button>
+
+                    {/* 3D Perspective View */}
+                    <button
+                        onClick={() => {
+                            if (orbitRef.current) {
+                                const cam = orbitRef.current.object;
+                                cam.position.set(0, 12, 7);
+                                orbitRef.current.target.set(0, 0, 0);
+                                orbitRef.current.update();
+                            }
+                        }}
+                        title="3D Angled View"
+                        style={{
+                            padding: '8px 14px', borderRadius: '20px', background: 'rgba(255, 255, 255, 0.95)',
+                            border: '1px solid rgba(0, 0, 0, 0.08)', boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                            fontSize: '0.8rem', fontWeight: 800, color: '#1e293b', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap',
+                            backdropFilter: 'blur(8px)', transition: 'all 0.2s ease'
+                        }}
+                    >
+                        <span>🔄</span> 3D View
+                    </button>
+
+                    {/* Zoom In */}
                     <button
                         onClick={() => {
                             if (orbitRef.current) {
@@ -1853,6 +2209,7 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
                             display: 'flex', alignItems: 'center', justifyContent: 'center'
                         }}
                     >+</button>
+                    {/* Zoom Out */}
                     <button
                         onClick={() => {
                             if (orbitRef.current) {
