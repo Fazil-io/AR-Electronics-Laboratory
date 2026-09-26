@@ -821,55 +821,100 @@ const resumeAudio = (onStateChange?: (state: string) => void) => {
     }
 };
 
-const RealisticSwitch = ({ pos, onDrag, isOpen, onToggle, onSelect, isInteracting, selected, draggable = true, onAudioResume }: any) => (
-    <Draggable position={pos} onDrag={onDrag} onSelect={onSelect} lockY={0.25} isInteracting={isInteracting} draggable={draggable}>
-        <group onPointerDown={(e) => {
-            if (onAudioResume) onAudioResume(); // Ensure audio is resumed on interaction
-            if (!isInteracting) { onToggle(); }
-        }}>
-            {/* Base */}
-            <mesh position={[0, 0.15, 0]}>
-                <boxGeometry args={[0.7, 0.25, 0.4]} />
-                <meshStandardMaterial color="#333" roughness={0.5} />
-            </mesh>
-            {/* Toggle Lever */}
-            <group position={[isOpen ? -0.15 : 0.15, 0.25, 0]} rotation={[0, 0, isOpen ? 0.3 : -0.3]}>
-                <mesh position={[0, 0.2, 0]}>
-                    <cylinderGeometry args={[0.08, 0.08, 0.4, 16]} />
-                    <meshStandardMaterial color="#eee" metalness={0.6} roughness={0.3} />
+const playSwitchClick = () => {
+    try {
+        const { ctx, master } = getAudioEngine();
+        if (!ctx || !master) return;
+        if (ctx.state === 'suspended') ctx.resume();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(420, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.06);
+        gain.gain.setValueAtTime(0.4, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.06);
+        osc.connect(gain);
+        gain.connect(master);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.06);
+    } catch (e) {}
+};
+
+const RealisticSwitch = ({ pos, onDrag, isOpen, onToggle, onSelect, isInteracting, selected, draggable = true, onAudioResume }: any) => {
+    const handleSwitchPointerDown = (e: ThreeEvent<PointerEvent>) => {
+        e.stopPropagation();
+        playSwitchClick();
+        if (onAudioResume) onAudioResume();
+        onToggle?.();
+    };
+
+    return (
+        <Draggable position={pos} onDrag={onDrag} onSelect={onSelect} lockY={0.25} isInteracting={isInteracting} draggable={draggable}>
+            <group
+                onPointerDown={handleSwitchPointerDown}
+                onPointerOver={() => { document.body.style.cursor = "pointer"; }}
+                onPointerOut={() => { document.body.style.cursor = "auto"; }}
+            >
+                {/* Base */}
+                <mesh position={[0, 0.15, 0]}>
+                    <boxGeometry args={[0.7, 0.25, 0.4]} />
+                    <meshStandardMaterial color="#2d3748" roughness={0.4} />
                 </mesh>
-                <mesh position={[0, 0.4, 0]}>
-                    <sphereGeometry args={[0.12, 16, 16]} />
-                    <meshStandardMaterial color={isOpen ? "#cc3333" : "#22cc44"} />
+                {/* Toggle Lever */}
+                <group position={[isOpen ? -0.15 : 0.15, 0.25, 0]} rotation={[0, 0, isOpen ? 0.35 : -0.35]}>
+                    <mesh position={[0, 0.2, 0]}>
+                        <cylinderGeometry args={[0.08, 0.08, 0.4, 16]} />
+                        <meshStandardMaterial color="#eeeeee" metalness={0.7} roughness={0.2} />
+                    </mesh>
+                    <mesh position={[0, 0.4, 0]}>
+                        <sphereGeometry args={[0.13, 16, 16]} />
+                        <meshStandardMaterial
+                            color={isOpen ? "#ef4444" : "#22c55e"}
+                            emissive={isOpen ? "#991b1b" : "#15803d"}
+                            emissiveIntensity={1.2}
+                        />
+                    </mesh>
+                </group>
+
+                {/* State Label: clearly tells user whether switch is ON or OFF */}
+                <Text
+                    position={[0, 0.95, 0]}
+                    fontSize={0.13}
+                    color={isOpen ? "#f87171" : "#4ade80"}
+                    anchorX="center"
+                    outlineWidth={0.02}
+                    outlineColor="#000000"
+                >
+                    {isOpen ? "SWITCH: OFF (Click)" : "SWITCH: ON"}
+                </Text>
+
+                {/* 2 metal legs going into breadboard holes */}
+                <mesh position={[-0.25, -0.15, 0]}>
+                    <cylinderGeometry args={[0.02, 0.02, 0.55]} />
+                    <meshStandardMaterial color="#c0c0c0" metalness={0.9} />
                 </mesh>
+                <mesh position={[0.25, -0.15, 0]}>
+                    <cylinderGeometry args={[0.02, 0.02, 0.55]} />
+                    <meshStandardMaterial color="#c0c0c0" metalness={0.9} />
+                </mesh>
+
+                {/* Pin indicator dots when selected */}
+                {selected && (
+                    <>
+                        <mesh position={[-0.25, -0.42, 0]}>
+                            <sphereGeometry args={[0.035, 12, 12]} />
+                            <meshStandardMaterial color="#ffaa00" emissive="#ffaa00" emissiveIntensity={2} />
+                        </mesh>
+                        <mesh position={[0.25, -0.42, 0]}>
+                            <sphereGeometry args={[0.035, 12, 12]} />
+                            <meshStandardMaterial color="#ffaa00" emissive="#ffaa00" emissiveIntensity={2} />
+                        </mesh>
+                    </>
+                )}
             </group>
-
-            {/* 2 metal legs going into breadboard holes */}
-            <mesh position={[-0.25, -0.15, 0]}>
-                <cylinderGeometry args={[0.02, 0.02, 0.55]} />
-                <meshStandardMaterial color="#c0c0c0" metalness={0.9} />
-            </mesh>
-            <mesh position={[0.25, -0.15, 0]}>
-                <cylinderGeometry args={[0.02, 0.02, 0.55]} />
-                <meshStandardMaterial color="#c0c0c0" metalness={0.9} />
-            </mesh>
-
-            {/* Pin indicator dots when selected */}
-            {selected && (
-                <>
-                    <mesh position={[-0.25, -0.42, 0]}>
-                        <sphereGeometry args={[0.035, 12, 12]} />
-                        <meshStandardMaterial color="#ffaa00" emissive="#ffaa00" emissiveIntensity={2} />
-                    </mesh>
-                    <mesh position={[0.25, -0.42, 0]}>
-                        <sphereGeometry args={[0.035, 12, 12]} />
-                        <meshStandardMaterial color="#ffaa00" emissive="#ffaa00" emissiveIntensity={2} />
-                    </mesh>
-                </>
-            )}
-        </group>
-    </Draggable>
-);
+        </Draggable>
+    );
+};
 
 // --- Realistic Motor Sound Hook ---
 const useMotorSound = (active: boolean, intensity: number = 1.0) => {
@@ -1586,6 +1631,8 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
                     setGuideStepIndex(prev => prev + 1);
                 } else {
                     setGuideComplete(true);
+                    setWiringMode(false);
+                    setWireStart(null);
                 }
             }
 
@@ -1779,7 +1826,7 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
                     id,
                     type: ghostType as any,
                     pins,
-                    state: { pos: targetPos, color: ghostType === 'LED' ? ledColor : undefined, isOpen: false }
+                    state: { pos: targetPos, color: ghostType === 'LED' ? ledColor : undefined, isOpen: ghostType === 'Switch' ? true : false }
                 };
                 setComponents(prev => [...prev, newComp]);
                 setGhostType(null);
@@ -1914,7 +1961,24 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
                                     <div style={{ fontSize: '0.7rem', color: '#00bbee', fontWeight: '800' }}>{t('wire.clickSecond')}</div>
                                 </div>
                             )}
-                            <button onClick={() => { setWiringMode(false); setWireStart(null); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#00bbee', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '900', boxShadow: '0 4px 12px rgba(0,187,238,0.2)' }}>{t('wire.done')}</button>
+                            <button
+                                onClick={() => {
+                                    setWiringMode(false);
+                                    setWireStart(null);
+                                    setGhostType(null);
+                                    handleResumeAudio();
+                                }}
+                                style={{
+                                    width: '100%', marginTop: '12px', padding: '12px',
+                                    background: 'linear-gradient(135deg, #10b981, #059669)',
+                                    color: '#fff', border: 'none', borderRadius: '12px', cursor: 'pointer',
+                                    fontSize: '0.85rem', fontWeight: '900',
+                                    boxShadow: '0 4px 14px rgba(16,185,129,0.3)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                                }}
+                            >
+                                <span>✅</span> {t('wire.done')}
+                            </button>
                         </div>
                     )}
                 </div>
@@ -2058,8 +2122,14 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
                         </>
                     ) : (
                         <>
-                            <span style={{ color: '#22cc44', fontSize: '1.2rem' }}>🎉</span>
-                            {t('guide.complete')}
+                            <span style={{ color: circuitState.isComplete ? '#22cc44' : '#f59e0b', fontSize: '1.2rem' }}>
+                                {circuitState.isComplete ? '🎉' : '⚡'}
+                            </span>
+                            <span>
+                                {circuitState.isComplete
+                                    ? t('guide.complete')
+                                    : 'Wiring Complete! Click the Switch to Turn ON'}
+                            </span>
                         </>
                     )}
                 </div>
@@ -2084,10 +2154,39 @@ export default function ElectronicsLab({ onBack, experimentId = 'led-battery' }:
                 {/* KYC Modal */}
                 {showKYC && <KYCModal onClose={() => setShowKYC(false)} />}
 
-                {/* Wire mode hint */}
-                {wiringMode && wireStart && (
-                    <div style={{ position: 'absolute', bottom: 30, left: '50%', transform: 'translateX(-50%)', background: '#00bbee', color: '#fff', padding: '12px 30px', borderRadius: '14px', fontWeight: '800', fontSize: '0.9rem', boxShadow: '0 8px 30px rgba(0,187,238,0.3)', zIndex: 200 }}>
-                        {t('wire.clickSecondShort')}
+                {/* Floating Wiring Controller with Done Wiring Button */}
+                {wiringMode && (
+                    <div style={{
+                        position: 'absolute', bottom: 30, left: '50%', transform: 'translateX(-50%)',
+                        background: 'rgba(15, 23, 42, 0.92)', color: '#fff',
+                        padding: '10px 22px', borderRadius: '40px',
+                        fontWeight: '700', fontSize: '0.88rem',
+                        boxShadow: '0 10px 30px rgba(0,0,0,0.35)', backdropFilter: 'blur(16px)',
+                        border: '1px solid rgba(255,255,255,0.18)',
+                        display: 'flex', alignItems: 'center', gap: '16px', zIndex: 400
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '1.2rem' }}>🔌</span>
+                            <span>{wireStart ? t('wire.clickSecondShort') : 'Wiring Active — Click holes to connect'}</span>
+                        </div>
+                        <button
+                            onClick={() => {
+                                setWiringMode(false);
+                                setWireStart(null);
+                                setGhostType(null);
+                                handleResumeAudio();
+                            }}
+                            style={{
+                                background: 'linear-gradient(135deg, #10b981, #059669)',
+                                color: 'white', border: 'none', padding: '8px 18px',
+                                borderRadius: '25px', fontWeight: 800, fontSize: '0.82rem',
+                                cursor: 'pointer', boxShadow: '0 4px 14px rgba(16,185,129,0.4)',
+                                display: 'flex', alignItems: 'center', gap: '6px',
+                                transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <span>✅</span> {t('wire.done')}
+                        </button>
                     </div>
                 )}
                 {/* ===== JOYSTICK CONTROLLER ===== */}
